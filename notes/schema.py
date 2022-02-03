@@ -1,36 +1,31 @@
 import graphene
 from graphene_django import DjangoObjectType
+from graphene_django.filter import DjangoFilterConnectionField
 from graphql import GraphQLError
 from .models import Note
-from django.contrib.auth import get_user_model
 
 
 class NoteType(DjangoObjectType):
     class Meta:
         model = Note
-        fields = ("id", "body", "created", "owner")
+        filter_fields = ["id", "body", "created", "owner"]
+        interfaces = (graphene.relay.Node, )
 
 
 class Query(graphene.ObjectType):
-    all_notes = graphene.List(NoteType)
-    note = graphene.Field(NoteType, id=graphene.ID())
-
-    def resolve_all_notes(root, info):
-        return Note.objects.all()
-
-    def resolve_note(root, info, id):
-        return Note.objects.get(pk=id)
+    all_notes = DjangoFilterConnectionField(NoteType)
+    note = graphene.relay.Node.Field(NoteType)
 
 
-class CreateNote(graphene.Mutation):
+class CreateNote(graphene.relay.ClientIDMutation):
     note = graphene.Field(NoteType)
 
-    class Arguments:
+    class Input:
         body = graphene.String(required=True)
 
-    def mutate(self, info, body):
+    def mutate_and_get_payload(root, info, **input):
         if(info.context.user.pk is not None):
-            note = Note(body=body, owner_id=info.context.user.pk)
+            note = Note(input.get('body'),  owner_id=info.context.user.pk)
             note.save()
             return CreateNote(
                 note
@@ -39,16 +34,16 @@ class CreateNote(graphene.Mutation):
             raise GraphQLError('You must be logged to create the note!')
 
 
-class UpdateNote(graphene.Mutation):
+class UpdateNote(graphene.relay.ClientIDMutation):
     note = graphene.Field(NoteType)
 
-    class Arguments:
+    class Input:
         id = graphene.ID()
         body = graphene.String(required=True)
 
-    def mutate(self, info, id, body):
-        note = Note.objects.get(id=id)
-        note.body = body
+    def mutate_and_get_payload(root, info, **input):
+        note = Note.objects.get(id=input.get('id'))
+        note.body = input.get('body')
         note.save()
 
         return UpdateNote(
@@ -56,18 +51,21 @@ class UpdateNote(graphene.Mutation):
         )
 
 
-class DeleteNote(graphene.Mutation):
+class DeleteNote(graphene.relay.ClientIDMutation):
     msg = graphene.String()
 
-    class Arguments:
-        id = graphene.ID()
+    class Input:
+        id = graphene.ID(required=True)
 
-    def mutate(self, info, id):
-        note = Note.objects.get(id=id)
-        note.delete()
-        return DeleteNote(
-            msg="note deleted successfull"
-        )
+    def mutate_and_get_payload(root, info, **input):
+        note = Note.objects.get(id=input.get('id')) or None
+        if(note is not None):
+            note.delete()
+            return DeleteNote(
+                msg="note deleted successfull"
+            )
+        else:
+            raise GraphQLError('Note not found')
 
 
 class Mutation(graphene.ObjectType):
